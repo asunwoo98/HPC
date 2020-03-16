@@ -82,13 +82,11 @@ void f ( int n )
     x[i] = x[i-1] + x[i-2];
     cout << "  " << i << "  " << x[i] << "\n";
   }
-
-  delete [] x;
   free(x);
   return;
 }
 
 /* 
 Problem:
-x was not freed in f. Fixed by freeing x at the end of f.
+x was deleted instead of freed, although it was not statically allocated. Fixed by freeing x instead.
 */
