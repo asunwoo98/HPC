@@ -14,7 +14,7 @@ int main( int argc, char *argv[]) {
 
   // Number of random numbers per processor (this should be increased
   // for actual tests or could be passed in through the command line
-  int N = 100;
+  int N = 10e4;
 
   int* vec = (int*)malloc(N*sizeof(int));
   // seed random number generator differently on every core
@@ -98,20 +98,30 @@ int main( int argc, char *argv[]) {
   std::sort(newvec,newvec+totalcount);
 
   // every process writes its result to a file
+  // FILE* output;
+  // output= fopen("output.txt","w");
+  // for (int i = 0; i < p; i++) {
+  //   MPI_Barrier(MPI_COMM_WORLD);
+  //   if (rank == i) {
+  //     fprintf(output,"process %d ==> ", rank);
+  //     for (long k = 0; k < totalcount; k++) {
+  //       fprintf(output,"%4ld ", newvec[k]);
+  //     }
+  //     fprintf(output,"\n");
+  //   }
+  //   MPI_Barrier(MPI_COMM_WORLD);
+  // }
+  // fclose(output);
   FILE* output;
-  output= fopen("output.txt","w");
-  for (int i = 0; i < p; i++) {
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (rank == i) {
-      fprintf(output,"process %d ==> ", rank);
-      for (long k = 0; k < totalcount; k++) {
-        fprintf(output,"%4ld ", newvec[k]);
-      }
-      fprintf(output,"\n");
-    }
-    MPI_Barrier(MPI_COMM_WORLD);
+  char filename[256];
+  snprintf(filename, 256, "output%02d.txt", rank);
+  output= fopen(filename,"w+");
+  fprintf(output,"process %d has elements ==> \n", rank);
+  for (long k = 0; k < totalcount; k++) {
+    fprintf(output,"%4ld ", newvec[k]);
   }
   fclose(output);
+
 
   free(vec);
   free(loc_split);
