@@ -14,33 +14,42 @@
 #include <stdio.h>
 #include <omp.h>
 #include <string>
+#include <time.h>
+#include "utils.h"
+
 
 double L2 (double* v1, double* v2, long len) {
   double sum = 0;
+  #pragma omp parallel for schedule(static)
   for (int i = 0; i < len; i++){
-    sum += (v1-v2) * (v1-v2)
+    sum += (v1[i]-v2[i]) * (v1[i]-v2[i]);
   }
+  return sum;
 }
 
-double L2 (long* v1, long* v2, long len) {
+double L2 (int* v1, int* v2, long len) {
   double sum = 0;
+  #pragma omp parallel for schedule(static)
   for (int i = 0; i < len; i++){
-    sum += (v1-v2) * (v1-v2)
+    sum += (v1[i]-v2[i]) * (v1[i]-v2[i]);
   }
+  return sum;
 }
 //initiate centroids as unique random data points from input
-void init_random(double* c1, double* c2, double* c1_ref, double* c2_ref,const double* x1, const double* x2, long K, long N){
-  long* temp = (long*) malloc (k * sizeof(long));
+void init_random(double* c1, double* c2, double* c1_ref, double* c2_ref, const double* x1, const double* x2, long K, long N){
+   srand(645135);
+  //srand(time(NULL));
+  long* temp = (long*) malloc (K * sizeof(long));
   for (int i = 0; i < K; i++) {
-    boolean nodupe;
+    bool dupe;
     do {
-      nodupe = false;
-      long new = rand() % N;
-      temp[i] = new;
-      for (int j = 0; j < i) {
-        if (temp[j] == new) nodupe = true;
+      dupe = false;
+      long newc = rand() % N;
+      temp[i] = newc;
+      for (int j = 0; j < i; j++) {
+        if (temp[j] == newc) dupe = true;
       }
-    } while(nodupe);
+    } while(dupe);
     c1[i] = x1[temp[i]];
     c2[i] = x2[temp[i]];
     c1_ref[i] = x1[temp[i]];
@@ -49,33 +58,36 @@ void init_random(double* c1, double* c2, double* c1_ref, double* c2_ref,const do
   free(temp);
 }
 
-void expectation (double* c1, double* c2, const double* x1, const double* x2, const long* z, const double* dist, long K, long N){
+void expectation (double* c1, double* c2, const double* x1, const double* x2, int* z, long K, long N){
   #pragma omp parallel for schedule(static)
   for (long i = 0; i < N; i++) {
+    double bestdist, currdist;
+    bestdist = DBL_MAX;
     for (long j = 0; j < K; j++) {
-      dist[j] = (x1[i]-c1[j]) * (x1[i]-c1[j]) + (x2[i]-c2[j]) * (x2[i]-c2[j]);
-    }
-
-    z[i] = 0;
-    for (long j = 1; j < K; j++) {
-      if (dist[j] < dist[z[i]]) z[i] = j;
+      currdist = (x1[i]-c1[j]) * (x1[i]-c1[j]) + (x2[i]-c2[j]) * (x2[i]-c2[j]);
+      if (currdist < bestdist) {
+        z[i] = j;
+        bestdist = currdist;
+      }
     }
   }
 }
 
-void maximization (double* c1, double* c2, const double* x1, const double* x2, const long* z, long K, long N){
+void maximization (double* c1, double* c2, const double* x1, const double* x2, const int* z, long K, long N){
   double* count = (double*) malloc(K * sizeof(double));
+  #pragma omp parallel for schedule(static)
   for (long i = 0; i < K; i++){
     c1[i] = 0;
     c2[i] = 0;
     count[i] = 0;
   }
+  // #pragma omp parallel for schedule(static) reduction(+:c1[:N],c2[:N])
   for (long i = 0; i < N; i++){
     c1[z[i]] += x1[i];
     c2[z[i]] += x2[i];
     count[z[i]] += 1;
   }
-
+  #pragma omp parallel for schedule(static)
   for (long i = 0; i < K; i++){
     c1[i] /= count[i];
     c2[i] /= count[i];
@@ -84,15 +96,29 @@ void maximization (double* c1, double* c2, const double* x1, const double* x2, c
 }
 
 __global__
-void kmeans_kernel(double* c, const double* a, const double* b, long N){
+void expectation_kernel(double* c1, double* c2, const double* __restrict__ x1, const double* __restrict__ x2, int* z, long K, long N){
+  double bestdist, currdist;
+  int besti;
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  //__shared__ double temp;
-  //temp = 0;
-  for (long i = 0; i < N; i++) {
-    //if (idx < N) c[i] += a[idx] * b[i*N+idx]; //this version produces errors.
-    if (idx < N) c[idx] += a[i] * b[idx*N+i];
+  const double lx1= x1[idx], lx2 = x2[idx];
+  // extern __shared__ double lc1[];
+  // double* lc2=&lc1[K];
+  // for(int i = 0 ; i< K; i++){
+  //   lc1[i] = c1[i];
+  //   lc2[i] = c2[i];
+  // }
+  // __syncthreads();
+  if (idx < N){
+    bestdist = DBL_MAX;
+    for (long j = 0; j < K; j++) {
+      currdist = (lx1-c1[j]) * (lx1-c1[j]) + (lx2-c2[j]) * (lx2-c2[j]);
+      if (currdist < bestdist) {
+        besti = j;
+        bestdist = currdist;
+      }
+    }
   }
-  //c[idx] = temp;
+  z[idx] = besti;
 }
 
 void Check_CUDA_Error(const char *message){
@@ -105,10 +131,11 @@ void Check_CUDA_Error(const char *message){
 
 int main(int argc, char** argv) {
   //long N = (1UL<<25); // 2^25
-  long N = read_option<int>("-n", argc, argv, "5000");
-  long K = read_option<long>("-k", argc, argv, "15");
-  long max_iter = read_option<long>("-itr", argc, argv, "1000");
+  long N = read_option<int>("-n", argc, argv, "100000");
+  long K = read_option<long>("-k", argc, argv, "100");
+  long max_iter = read_option<long>("-itr", argc, argv, "10000");
   double tol = read_option<double>("-tol", argc, argv, "1e-5");
+  bool fast_finish = false;
   double* x1 = (double*) malloc(N * sizeof(double));
   double* x2 = (double*) malloc(N * sizeof(double));
   double* c1 = (double*) malloc(K * sizeof(double));
@@ -117,10 +144,9 @@ int main(int argc, char** argv) {
   double* c2_prev = (double*) malloc(K * sizeof(double));
   double* c1_ref = (double*) malloc(K * sizeof(double));
   double* c2_ref = (double*) malloc(K * sizeof(double));
-  double* dist = (double*) malloc(K * sizeof(double));
-  long* z = (long*) malloc(N * sizeof(long));
-  long* z_prev = (long*) malloc(N * sizeof(long));
-  long* z_ref = (long*) malloc(N * sizeof(long));
+  int* z = (int*) malloc(N * sizeof(int));
+  int* z_prev = (int*) malloc(N * sizeof(int));
+  int* z_ref = (int*) malloc(N * sizeof(int));
 
   #pragma omp parallel for schedule(static)
   for (long i = 0; i < N; i++) {
@@ -146,70 +172,191 @@ int main(int argc, char** argv) {
   // }
   // else printf("Unable to open data file.\n", );
   FILE* data;
-  data = fopen("s1.txt","r");
+  data = fopen("birch1.txt","r");
   for(int i = 0 ; i < N; i++){
-    fscanf(data, "%f", x1[i]);
-    fscanf(data, "%f", x2[i]);
+    fscanf(data, "%lf", &x1[i]);
+    fscanf(data, "%lf", &x2[i]);
   }
   fclose(data);
-  }
+  printf("import successful\n");
 
 
   //initialize cluster centers
   init_random (c1, c2, c1_ref, c2_ref, x1, x2, K, N);
+  // printf("Initial centroids:\n");
+  // for(int i = 0; i< K; i++){
+  //   printf("%f, %f\n",c1_ref[i],c2_ref[i] );
+  //   // printf("diff: %f, %f\n",c1_ref[i]-c1[i],c2_ref[i]-c2[i] );
+  // }
 
+
+  printf("begin CPU kmeans:\n");
   double tt = omp_get_wtime();
   //printf("running inner_prod\n");
   //means(z_ref, x, y, N);
-  for (int i = 0; i < max_iter; i++) {
-    expectation(c1_ref, c2_ref, x1, x2, z_ref, dist, K, N);
+  int iter = 0;
+  for (iter = 0; iter < max_iter; iter++) {
+    // printf("begin expectation\n");
+    expectation(c1_ref, c2_ref, x1, x2, z_ref, K, N);
+    // printf("begin maximization\n");
     maximization(c1_ref, c2_ref, x1, x2, z_ref, K, N);
+    // printf("begin tol check\n");
+    // printf("z change: %f\n",L2(z_prev,z_ref, N));
+    // printf("centroid change: %f\n",L2(c1_prev,c1_ref, K)+L2(c2_prev,c2_ref, K));
 
-    if (L2(z_prev, z, N) < tol && L2(c1_prev,c1, K)+L2(c2_prev,c2, K) < tol){
-      printf("Done at iteration %d\n", i);
-      break;
+    if(fast_finish){
+      if (L2(z_prev, z_ref, N) < tol && L2(c1_prev,c1_ref, K)+L2(c2_prev,c2_ref, K) < tol){
+        printf("Done at iteration %d\n", iter);
+        break;
+      }
+      // printf("begin copy\n");
+      std::copy (z_ref, z_ref + N, z_prev);
+      std::copy (c1_ref, c1_ref + K, c1_prev);
+      std::copy (c2_ref, c2_ref + K, c2_prev);
+      // z_temp = z_prev; z_prev = z_ref; z_ref = z_temp;
+      // c1_temp = c1_prev; c1_prev = c1_ref; c1_ref = c1_temp;
+      // c2_temp = c2_prev; c2_prev = c2_ref; c2_ref = c2_temp;
     }
-    copy (z_ref, z_ref + N, z_prev);
-    copy (c1_ref, c1_ref + N, c1_prev);
-    copy (c2_ref, c2_ref + N, c2_prev);
+
   }
   //printf("exiting inner_prod\n");
   //printf("CPU Bandwidth = %f GB/s\n", 3/1e9/ (omp_get_wtime()-tt)*N*N*sizeof(double)) ;
-  printf("Time taken = %f s\n", omp_get_wtime()-tt) ;
+  printf("Time taken CPU = %f s\n", omp_get_wtime()-tt) ;
+  printf("Finished in %d iterations.\n", iter) ;
+
+  // printf("final centroids:\n" );
+  // for(int i = 0; i< K; i++){
+  //   printf("%f, %f\n",c1_ref[i],c2_ref[i] );
+  // }
 
 
+  // printf("assignments: \n");
+  // for(int i = 0; i< N; i++){
+  //   printf("%d\n",z_ref[i]);
+  // }
 
-  double *x_d, *y_d, *z_d;
-  cudaMalloc(&x_d, N*sizeof(double));
-  Check_CUDA_Error("malloc x failed");
-  cudaMalloc(&y_d, N*N*sizeof(double));
-  Check_CUDA_Error("malloc y failed");
-  cudaMalloc(&z_d, N*sizeof(double));
-  Check_CUDA_Error("malloc z failed");
+  printf("\n\n\n" );
+  double *x1_d, *x2_d;
+  double *c1_d, *c2_d;
+  int *z_d;
+  cudaMalloc(&x1_d, N*sizeof(double));
+  Check_CUDA_Error("cuda malloc x1 failed");
+  cudaMalloc(&x2_d, N*sizeof(double));
+  Check_CUDA_Error("cuda malloc x2 failed");
+  cudaMalloc(&c1_d, K*sizeof(double));
+  Check_CUDA_Error("cuda malloc c1 failed");
+  cudaMalloc(&c2_d, K*sizeof(double));
+  Check_CUDA_Error("cuda malloc c2 failed");
+  cudaMalloc(&z_d, N*sizeof(int));
+  Check_CUDA_Error("cuda malloc z failed");
 
+  printf("begin GPU kmeans:\n");
   tt = omp_get_wtime();
-  cudaMemcpy(x_d, x, N*sizeof(double), cudaMemcpyHostToDevice);
-  //Check_CUDA_Error("memcpy x failed");
-  cudaMemcpy(y_d, y, N*N*sizeof(double), cudaMemcpyHostToDevice);
-  //Check_CUDA_Error("memcpy y failed");
-  kmeans_kernel<<<N/1024,1024>>>(z_d, x_d, y_d, N);
-  //Check_CUDA_Error("kernel");
-  cudaDeviceSynchronize();
-  cudaMemcpy(z, z_d, N*sizeof(double), cudaMemcpyDeviceToHost);
-  printf("GPU Bandwidth = %f GB/s\n", 3/1e9/ (omp_get_wtime()-tt)*N*N*sizeof(double)) ;
+  cudaMemcpy(x1_d, x1, N*sizeof(double), cudaMemcpyHostToDevice);
+  Check_CUDA_Error("memcpy x1 failed");
+  cudaMemcpy(x2_d, x2, N*sizeof(double), cudaMemcpyHostToDevice);
+  Check_CUDA_Error("memcpy x2 failed");
+  // cudaMemcpy(c1_d, c1, K*sizeof(double), cudaMemcpyHostToDevice);
+  // Check_CUDA_Error("memcpy c1 failed");
+  // cudaMemcpy(c2_d, c2, K*sizeof(double), cudaMemcpyHostToDevice);
+  // Check_CUDA_Error("memcpy c2 failed");
+  cudaMemcpy(z_d, z, N*sizeof(int), cudaMemcpyHostToDevice);
+  Check_CUDA_Error("memcpy z failed");
+  iter = 0;
+  for (iter = 0; iter < max_iter; iter++) {
+    // printf("begin iter %d\n",iter);
+    cudaMemcpy(c1_d, c1, K*sizeof(double), cudaMemcpyHostToDevice);
+    Check_CUDA_Error("memcpy c1 failed");
+    cudaMemcpy(c2_d, c2, K*sizeof(double), cudaMemcpyHostToDevice);
+    Check_CUDA_Error("memcpy c2 failed");
+    expectation_kernel<<<N/1024,1024>>>(c1_d,c2_d,x1_d, x2_d, z_d, K, N);
+    Check_CUDA_Error("kernel");
+    cudaDeviceSynchronize();
+    cudaMemcpy(z, z_d, N*sizeof(int), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(c1, c1_d, K*sizeof(double), cudaMemcpyDeviceToHost);
+    // cudaMemcpy(c2, c2_d, K*sizeof(double), cudaMemcpyDeviceToHost);
+    // printf("begin maximization\n");
+    maximization(c1, c2, x1, x2, z, K, N);
 
-  double err = 0;
-  for (long i = 0; i < N; i++) err += fabs(z[i]-z_ref[i]);
-  printf("Error = %f\n", err);
+    // printf("z change: %f\n",L2(z_prev,z, N));
+    // printf("centroid change: %f\n",L2(c1_prev,c1, K)+L2(c2_prev,c2, K));
+    // printf("begin tol check\n");
+
+    if(fast_finish){
+      if (L2(z_prev, z, N) < tol && L2(c1_prev,c1, K)+L2(c2_prev,c2, K) < tol){
+        printf("Done at iteration %d\n", iter);
+        break;
+      }
+      // printf("begin copy\n");
+      std::copy (z, z + N, z_prev);
+      std::copy (c1, c1 + K, c1_prev);
+      std::copy (c2, c2 + K, c2_prev);
+      // z_temp = z_prev; z_prev = z_ref; z_ref = z_temp;
+      // c1_temp = c1_prev; c1_prev = c1_ref; c1_ref = c1_temp;
+      // c2_temp = c2_prev; c2_prev = c2_ref; c2_ref = c2_temp;
+    }
+  }
+  // printf("GPU Bandwidth = %f GB/s\n", 3/1e9/ (omp_get_wtime()-tt)*N*N*sizeof(double)) ;
+  printf("Time taken GPU = %f s\n", omp_get_wtime()-tt) ;
+  printf("Finished in %d iterations.\n", iter) ;
+
+  // printf("final centroids:\n" );
+  // for(int i = 0; i< K; i++){
+  //   printf("%f, %f\n",c1[i],c2[i] );
+  // }
+
+  // for(int i = 0; i<N; i++){
+  //   int min_index=i+1;
+  //   for(int j = i+1; j< N ;j++){
+  //     if(z[j]<z[min_index]){
+  //       min_index = j;
+  //     }
+  //   }
+  //   std::swap(z[i],z[min_index]);
+  // }
+  // for(int i = 0; i<N; i++){
+  //   int min_index=i+1;
+  //   for(int j = i+1; j< N; j++){
+  //     if(z_ref[j]<z_ref[min_index]){
+  //       min_index = j;
+  //     }
+  //   }
+  //   std::swap(z_ref[i],z_ref[min_index]);
+  // }
+  // double err = 0;
+  // for (long i = 0; i < N; i++) err += fabs(z[i]-z_ref[i]);
+  // double err = L2(c1,c1_ref,K)+L2(c2,c2_ref,K);
+  std::sort(z,z+N);
+  std::sort(z_ref,z+N);
+  double err = L2(z,z_ref,N);
+  printf("Error = %f\n", (err));
+
+  // printf("final centroids:\n" );
+  // for(int i = 0; i< K; i++){
+  //   printf("%f, %f\n",c1[i],c2[i] );
+  // }
+  // printf("final centroids:\n" );
+  // for(int i = 0; i< K; i++){
+  //   printf("%f, %f\n",c1_ref[i],c2_ref[i] );
+  // }
 
   //printf("%f,  %f", z_ref[0], z_ref[1]);
-  cudaFree(x_d);
-  cudaFree(y_d);
+  cudaFree(x1_d);
+  cudaFree(x2_d);
+  cudaFree(c1_d);
+  cudaFree(c2_d);
   cudaFree(z_d);
 
-  free(x);
-  free(y);
+  free(x1);
+  free(x2);
+  free(c1);
+  free(c2);
+  free(c1_prev);
+  free(c2_prev);
+  free(c1_ref);
+  free(c2_ref);
   free(z);
+  free(z_prev);
   free(z_ref);
 
   return 0;

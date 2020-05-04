@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <mpi.h>
+#include <algorithm>
 #include <string.h>
 
 /* compuate global residual, assuming ghost values are updated */
@@ -19,10 +20,11 @@ double compute_residual(double *lu, double* f, int lN, double invhsq){
   // }
   for (int i = 1; i < lN+1; i++) {
     for (int j = 1; j < lN+1; j++) {
-      tmp = -f[i*(lN+2)+j] + (4*u[i*(lN+2)+j] + u[(i-1)*(lN+2)+j] + u[i*(lN+2)+(j-1)] + u[(i+1)*(lN+2)+j] + u[i*(lN+2)+(j+1)])*invhsq;
-      lres += tmp*tmp
+      tmp = -f[i*(lN+2)+j] + (4*lu[i*(lN+2)+j] + lu[(i-1)*(lN+2)+j] + lu[i*(lN+2)+(j-1)] + lu[(i+1)*(lN+2)+j] + lu[i*(lN+2)+(j+1)])*invhsq;
+      lres += tmp*tmp;
     }
   }
+  printf("going into allreduce" );
   /* use allreduce for convenience; a reduce would also be sufficient */
   MPI_Allreduce(&lres, &gres, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   return sqrt(gres);
@@ -48,7 +50,7 @@ int main(int argc, char * argv[]){
 
   /* compute number of unknowns handled by each process */
   lN = N / sqrt(p);
-  if ((N % sqrt(p) != 0) && mpirank == 0 ) {
+  if ((N % (int)sqrt(p) != 0) && mpirank == 0 ) {
     printf("N: %d, local N: %d\n", N, lN);
     printf("Exiting. N must be a multiple of sqrt(p)\n");
     MPI_Abort(MPI_COMM_WORLD, 0);
@@ -58,17 +60,21 @@ int main(int argc, char * argv[]){
   double tt = MPI_Wtime();
 
   /* Allocation of vectors, including left/upper and right/lower ghost points */
-  double * lu    = (double *) calloc(sizeof(double), (lN + 2)*(lN + 2));
-  double * lf = (double *) calloc(sizeof(double), (lN + 2)*(lN + 2));
-  double * lunew = (double *) calloc(sizeof(double), (lN + 2)*(lN + 2));
+  double * lu    = (double *) calloc( (lN + 2)*(lN + 2),sizeof(double));
+  double * lf = (double *) calloc((lN + 2)*(lN + 2),sizeof(double));
+  double * lunew = (double *) calloc((lN + 2)*(lN + 2),sizeof(double));
   double * lutemp;
   //initialize lf
   for (int i = 0; i < lN+2; i++) {
     for(int j = 0; j < lN+2; j++) {
       //f
       lf[i*(lN+2)+j] = 1;
+      // lu[i*(lN+2)+j] = 0;
+      // lunew[i*(lN+2)+j] = 0;
     }
   }
+  printf("lN = $d", lN);
+  printf("memory alloc success, %f\n", lu[(lN+2)*(lN+2)-1]);
 
   double h = 1.0 / (N + 1);
   double hsq = h * h;
@@ -78,6 +84,7 @@ int main(int argc, char * argv[]){
   /* initial residual */
   gres0 = compute_residual(lu, lf, lN, invhsq);
   gres = gres0;
+  printf("initial residual sucess\n");
 
   for (iter = 0; iter < max_iters && gres/gres0 > tol; iter++) {
 
@@ -87,11 +94,12 @@ int main(int argc, char * argv[]){
     // }
     for(int i = 1; i< lN+1; i++){
       for(int j = 1; j< lN+1; j++){
-        lunew[i*(lN+2)+j]=f[i*(lN+2)+j]*hsq + u[(i-1)*(lN+2)+j] + u[i*(lN+2)+(j-1)] + u[(i+1)*(lN+2)+j] + u[i*(lN+2)+(j+1)];
-        lunew[i*(lN+2)+j]=newu[i*(lN+2)+j]/4;
+        lunew[i*(lN+2)+j]=lf[i*(lN+2)+j]*hsq + lu[(i-1)*(lN+2)+j] + lu[i*(lN+2)+(j-1)] + lu[(i+1)*(lN+2)+j] + lu[i*(lN+2)+(j+1)];
+        lunew[i*(lN+2)+j]=lunew[i*(lN+2)+j]/4;
       }
     }
 
+    printf("jacobistep success\n");
     /* communicate ghost values */
     /* left */
     if (mpirank % lN != 0) {
@@ -122,11 +130,12 @@ int main(int argc, char * argv[]){
       MPI_Recv(&(lunew[1]), lN, MPI_DOUBLE, mpirank-4, 120, MPI_COMM_WORLD, &status);
     }
 
-
+    printf("ghost value exchange success");
     /* copy newu to u using pointer flipping */
-    lutemp = lu; lu = lunew; lunew = lutemp;
+    //lutemp = lu; lu = lunew; lunew = lutemp;
+    std::copy(lunew,lunew+(lN + 2)*(lN + 2),lu);
     if (0 == (iter % 10)) {
-      gres = compute_residual(lu, lN, invhsq);
+      gres = compute_residual(lu, lf, lN, invhsq);
       if (0 == mpirank) {
 	printf("Iter %d: Residual: %g\n", iter, gres);
       }
