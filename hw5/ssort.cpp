@@ -47,6 +47,7 @@ int main( int argc, char *argv[]) {
   int* root_split = (int*) malloc (p*(p-1)*sizeof(int));
   MPI_Gather(loc_split, p-1, MPI_INT, root_split, p*(p-1), MPI_INT, 0, MPI_COMM_WORLD);
 
+  printf("mpi gather complete\n");
   // root process does a sort and picks (p-1) splitters (from the
   // p(p-1) received elements)
   if (rank == 0){

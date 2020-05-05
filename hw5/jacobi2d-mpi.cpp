@@ -20,11 +20,11 @@ double compute_residual(double *lu, double* f, int lN, double invhsq){
   // }
   for (int i = 1; i < lN+1; i++) {
     for (int j = 1; j < lN+1; j++) {
-      tmp = -f[i*(lN+2)+j] + (4*lu[i*(lN+2)+j] + lu[(i-1)*(lN+2)+j] + lu[i*(lN+2)+(j-1)] + lu[(i+1)*(lN+2)+j] + lu[i*(lN+2)+(j+1)])*invhsq;
+      tmp = -f[i*(lN+2)+j] + (4*lu[i*(lN+2)+j] + lu[(i-1)*(lN+2)+j] + lu[i*(lN+2)+(j-1)] + lu[(i+1)*(lN+2)+j] + lu[i*(lN+2)+(j+1)]);//*invhsq;
       lres += tmp*tmp;
     }
   }
-  printf("going into allreduce" );
+  // printf("going into allreduce\n" );
   /* use allreduce for convenience; a reduce would also be sufficient */
   MPI_Allreduce(&lres, &gres, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
   return sqrt(gres);
@@ -45,11 +45,11 @@ int main(int argc, char * argv[]){
   MPI_Get_processor_name(processor_name, &name_len);
   printf("Rank %d/%d running on %s.\n", mpirank, p, processor_name);
 
-  sscanf(argv[1], "%d", &N);
+  sscanf(argv[1], "%d", &lN);
   sscanf(argv[2], "%d", &max_iters);
 
   /* compute number of unknowns handled by each process */
-  lN = N / sqrt(p);
+  N = lN * sqrt(p);
   if ((N % (int)sqrt(p) != 0) && mpirank == 0 ) {
     printf("N: %d, local N: %d\n", N, lN);
     printf("Exiting. N must be a multiple of sqrt(p)\n");
@@ -73,8 +73,8 @@ int main(int argc, char * argv[]){
       // lunew[i*(lN+2)+j] = 0;
     }
   }
-  printf("lN = $d", lN);
-  printf("memory alloc success, %f\n", lu[(lN+2)*(lN+2)-1]);
+  // printf("lN = %d\n", lN);
+  // printf("memory alloc success, %f\n", lu[(lN+2)*(lN+2)-1]);
 
   double h = 1.0 / (N + 1);
   double hsq = h * h;
@@ -84,7 +84,7 @@ int main(int argc, char * argv[]){
   /* initial residual */
   gres0 = compute_residual(lu, lf, lN, invhsq);
   gres = gres0;
-  printf("initial residual sucess\n");
+  // printf("initial residual sucess\n");
 
   for (iter = 0; iter < max_iters && gres/gres0 > tol; iter++) {
 
@@ -99,41 +99,42 @@ int main(int argc, char * argv[]){
       }
     }
 
-    printf("jacobistep success\n");
+    // printf("jacobistep success\n");
     /* communicate ghost values */
     /* left */
-    if (mpirank % lN != 0) {
+    if ((mpirank % lN != 0) && p>1) {
       /* If not the last process, send/recv bdry values to the right */
       for (int i = 1; i < lN+1; i++){
         MPI_Send(&(lunew[1+i*(lN+2)]), 1, MPI_DOUBLE, mpirank-1, 123, MPI_COMM_WORLD);
         MPI_Recv(&(lunew[0+i*(lN+2)]), 1, MPI_DOUBLE, mpirank-1, 124, MPI_COMM_WORLD, &status1);
       }
     }
+    // printf("left communicate success\n");
     /* right */
-    if (mpirank % lN != 3) {
+    if ((mpirank % lN != 3) && p>1) {
       /* If not the first process, send/recv bdry values to the left */
         for (int i = 1; i < lN+1; i++){
           MPI_Send(&(lunew[lN+i*(lN+2)]), 1, MPI_DOUBLE, mpirank+1, 124, MPI_COMM_WORLD);
           MPI_Recv(&(lunew[lN+1+i*(lN+2)]), 1, MPI_DOUBLE, mpirank+1, 123, MPI_COMM_WORLD, &status);
         }
     }
-
+    // printf("right communicate success\n");
     /* up */
-    if( mpirank <= p - lN ) {
+    if( (mpirank < p - lN) && p>1) {
       MPI_Send(&(lunew[1+(lN)*(lN+2)]), lN, MPI_DOUBLE, mpirank+4, 120, MPI_COMM_WORLD);
       MPI_Recv(&(lunew[1+(lN+1)*(lN+2)]), lN, MPI_DOUBLE, mpirank+4, 121, MPI_COMM_WORLD, &status);
     }
-
+    // printf("up communicate success\n");
     /* down */
-    if( mpirank >= lN ) {
+    if( (mpirank >= lN) && p>1) {
       MPI_Send(&(lunew[1+lN+2]), lN, MPI_DOUBLE, mpirank-4, 121, MPI_COMM_WORLD);
       MPI_Recv(&(lunew[1]), lN, MPI_DOUBLE, mpirank-4, 120, MPI_COMM_WORLD, &status);
     }
 
-    printf("ghost value exchange success");
+    // printf("ghost value exchange success\n");
     /* copy newu to u using pointer flipping */
-    //lutemp = lu; lu = lunew; lunew = lutemp;
-    std::copy(lunew,lunew+(lN + 2)*(lN + 2),lu);
+    lutemp = lu; lu = lunew; lunew = lutemp;
+    // std::copy(lunew,lunew+(lN + 2)*(lN + 2),lu);
     if (0 == (iter % 10)) {
       gres = compute_residual(lu, lf, lN, invhsq);
       if (0 == mpirank) {
