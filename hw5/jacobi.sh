@@ -11,5 +11,6 @@
 
 module purge
 module load openmpi/gnu/4.0.2
-mpirun -np 1 jacobi2d-mpi 100 1000
+mpirun -np 1 jacobi2d-mpi 16000000 1000
 # n = ln * sqrt(p)
+# 16,000,000 = 1,000,000 * 16

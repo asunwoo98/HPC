@@ -102,7 +102,8 @@ int main(int argc, char * argv[]){
     // printf("jacobistep success\n");
     /* communicate ghost values */
     /* left */
-    if ((mpirank % lN != 0) && p>1) {
+    int sqrtp = sqrt(p);
+    if ((mpirank % sqrtp != 0) && p>1) {
       /* If not the last process, send/recv bdry values to the right */
       for (int i = 1; i < lN+1; i++){
         MPI_Send(&(lunew[1+i*(lN+2)]), 1, MPI_DOUBLE, mpirank-1, 123, MPI_COMM_WORLD);
@@ -111,7 +112,7 @@ int main(int argc, char * argv[]){
     }
     // printf("left communicate success\n");
     /* right */
-    if ((mpirank % lN != 3) && p>1) {
+    if ((mpirank % sqrtp != sqrtp-1) && p>1) {
       /* If not the first process, send/recv bdry values to the left */
         for (int i = 1; i < lN+1; i++){
           MPI_Send(&(lunew[lN+i*(lN+2)]), 1, MPI_DOUBLE, mpirank+1, 124, MPI_COMM_WORLD);
@@ -120,15 +121,15 @@ int main(int argc, char * argv[]){
     }
     // printf("right communicate success\n");
     /* up */
-    if( (mpirank < p - lN) && p>1) {
-      MPI_Send(&(lunew[1+(lN)*(lN+2)]), lN, MPI_DOUBLE, mpirank+4, 120, MPI_COMM_WORLD);
-      MPI_Recv(&(lunew[1+(lN+1)*(lN+2)]), lN, MPI_DOUBLE, mpirank+4, 121, MPI_COMM_WORLD, &status);
+    if( (mpirank < p - sqrtp) && p>1) {
+      MPI_Send(&(lunew[1+(lN)*(lN+2)]), lN, MPI_DOUBLE, mpirank+sqrtp, 120, MPI_COMM_WORLD);
+      MPI_Recv(&(lunew[1+(lN+1)*(lN+2)]), lN, MPI_DOUBLE, mpirank+sqrtp, 121, MPI_COMM_WORLD, &status);
     }
     // printf("up communicate success\n");
     /* down */
-    if( (mpirank >= lN) && p>1) {
-      MPI_Send(&(lunew[1+lN+2]), lN, MPI_DOUBLE, mpirank-4, 121, MPI_COMM_WORLD);
-      MPI_Recv(&(lunew[1]), lN, MPI_DOUBLE, mpirank-4, 120, MPI_COMM_WORLD, &status);
+    if( (mpirank >= sqrtp) && p>1) {
+      MPI_Send(&(lunew[1+lN+2]), lN, MPI_DOUBLE, mpirank-sqrtp, 121, MPI_COMM_WORLD);
+      MPI_Recv(&(lunew[1]), lN, MPI_DOUBLE, mpirank-sqrtp, 120, MPI_COMM_WORLD, &status);
     }
 
     // printf("ghost value exchange success\n");
