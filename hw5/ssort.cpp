@@ -59,7 +59,7 @@ int main( int argc, char *argv[]) {
 
   // root process broadcasts splitters to all other processes
   MPI_Bcast (loc_split, p-1, MPI_INT, 0, MPI_COMM_WORLD);
-
+  printf("mpi bcast complete\n");
   // every process uses the obtained splitters to decide which
   // integers need to be sent to which other process (local bins).
   // Note that the vector is already locally sorted and so are the
@@ -89,6 +89,7 @@ int main( int argc, char *argv[]) {
   // MPI_Alltoallv to exchange the data
   int* recvcounts = (int*) malloc ((p)*sizeof(int));
   MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, MPI_COMM_WORLD);
+  printf("mpi alltoall complete\n");
 
   int* rdispls = (int*) malloc ((p)*sizeof(int));
   rdispls[0] = 0;
@@ -100,7 +101,7 @@ int main( int argc, char *argv[]) {
 
   int* newvec = (int*)malloc(totalcount*sizeof(int));
   MPI_Alltoallv(vec, sendcounts, sdispls, MPI_INT, newvec, recvcounts, rdispls, MPI_INT, MPI_COMM_WORLD);
-
+  printf("mpi alltoallv complete\n");
   // do a local sort of the received data
   std::sort(newvec,newvec+totalcount);
 
