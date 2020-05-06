@@ -7,6 +7,14 @@
 #include <time.h>
 #include "utils.h"
 
+void myprint(int* vec, int n, int p){
+  printf("p = %d: ",p);
+  for(int i =0; i< n; i++){
+    printf("%d ",vec[i] );
+  }
+  printf("\n");
+}
+
 int main( int argc, char *argv[]) {
   MPI_Init(&argc, &argv);
 
@@ -16,15 +24,13 @@ int main( int argc, char *argv[]) {
 
   // Number of random numbers per processor (this should be increased
   // for actual tests or could be passed in through the command line
-  int N = read_option<int>("-n", argc, argv, "10e4");;
+  int N = read_option<int>("-n", argc, argv, "10000");;
 
   int* vec = (int*)malloc(N*sizeof(int));
   // seed random number generator differently on every core
   srand((unsigned int) (rank + 393919));
 
-  clock_t t;
-  MPI_Barrier(MPI_COMM_WORLD);
-  t=clock();
+
 
   // fill vector with random integers
   for (int i = 0; i < N; ++i) {
@@ -32,6 +38,9 @@ int main( int argc, char *argv[]) {
   }
   printf("rank: %d, first entry: %d\n", rank, vec[0]);
 
+
+  MPI_Barrier(MPI_COMM_WORLD);
+  double tt=MPI_Wtime();
   // sort locally
   std::sort(vec, vec+N);
 
@@ -45,9 +54,8 @@ int main( int argc, char *argv[]) {
   // every process communicates the selected entries to the root
   // process; use for instance an MPI_Gather
   int* root_split = (int*) malloc (p*(p-1)*sizeof(int));
-  MPI_Gather(loc_split, p-1, MPI_INT, root_split, p*(p-1), MPI_INT, 0, MPI_COMM_WORLD);
+  MPI_Gather(loc_split, p-1, MPI_INT, root_split, (p-1), MPI_INT, 0, MPI_COMM_WORLD);
 
-  printf("mpi gather complete\n");
   // root process does a sort and picks (p-1) splitters (from the
   // p(p-1) received elements)
   if (rank == 0){
@@ -59,7 +67,6 @@ int main( int argc, char *argv[]) {
 
   // root process broadcasts splitters to all other processes
   MPI_Bcast (loc_split, p-1, MPI_INT, 0, MPI_COMM_WORLD);
-  printf("mpi bcast complete\n");
   // every process uses the obtained splitters to decide which
   // integers need to be sent to which other process (local bins).
   // Note that the vector is already locally sorted and so are the
@@ -76,7 +83,7 @@ int main( int argc, char *argv[]) {
   int* sdispls = (int*) malloc ((p)*sizeof(int));
   sdispls[0] = 0;
   for (int i = 0; i < p-1; i++) {
-    sdispls[i+1] = std::lower_bound(vec, vec+N, sdispls[i]) - vec;
+    sdispls[i+1] = std::lower_bound(vec, vec+N, loc_split[i]) - vec;
   }
   int* sendcounts = (int*) malloc ((p)*sizeof(int));
   for (int i = 0; i < p-1; i++) {
@@ -87,9 +94,8 @@ int main( int argc, char *argv[]) {
   // send and receive: first use an MPI_Alltoall to share with every
   // process how many integers it should expect, and then use
   // MPI_Alltoallv to exchange the data
-  int* recvcounts = (int*) malloc ((p)*sizeof(int));
+  int* recvcounts = (int*) calloc ((p),sizeof(int));
   MPI_Alltoall(sendcounts, 1, MPI_INT, recvcounts, 1, MPI_INT, MPI_COMM_WORLD);
-  printf("mpi alltoall complete\n");
 
   int* rdispls = (int*) malloc ((p)*sizeof(int));
   rdispls[0] = 0;
@@ -101,14 +107,13 @@ int main( int argc, char *argv[]) {
 
   int* newvec = (int*)malloc(totalcount*sizeof(int));
   MPI_Alltoallv(vec, sendcounts, sdispls, MPI_INT, newvec, recvcounts, rdispls, MPI_INT, MPI_COMM_WORLD);
-  printf("mpi alltoallv complete\n");
   // do a local sort of the received data
   std::sort(newvec,newvec+totalcount);
 
   MPI_Barrier(MPI_COMM_WORLD);
-  t = clock() -t;
+  double elapsed = MPI_Wtime()-tt;
   if(rank == 0){
-    printf("ssort on lN = %d finished in %f s\n",N, (float)t );
+    printf("ssort on N = %d finished in %f s\n",N, elapsed );
   }
   // every process writes its result to a file
   // FILE* output;
